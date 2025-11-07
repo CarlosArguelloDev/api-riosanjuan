@@ -10,10 +10,6 @@ load_dotenv()
 
 # Configuración base
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg2://postgres:postgres@postgres-db:5432/monitoreo_rio",
-)
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
