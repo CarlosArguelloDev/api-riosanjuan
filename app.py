@@ -4,6 +4,7 @@ from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 from dotenv import load_dotenv
+from sqlalchemy.orm import aliased
 
 # Cargar variables de entorno (.env)
 load_dotenv()
@@ -62,6 +63,14 @@ class Medicion(db.Model):
     )
     fecha_hora = db.Column(db.DateTime(timezone=True), primary_key=True, nullable=False)
     valor = db.Column(db.Float, nullable=False)
+
+class Prediccion(db.Model):
+    __tablename__ = "predicciones"
+    id_prediccion   = db.Column(db.BigInteger, primary_key=True)  
+    id_sensor       = db.Column(db.BigInteger, nullable=False)
+    fecha_objetivo  = db.Column(db.DateTime(timezone=True), nullable=False)
+    valor_predicho  = db.Column(db.Float, nullable=False)
+    emitido_en      = db.Column(db.DateTime(timezone=True), nullable=False)
 
 
 # ----------------------------------
@@ -252,6 +261,165 @@ def consultar_mediciones():
         return fail(str(e), 400)
     except Exception as e:
         return fail("Error al consultar mediciones", 400, str(e))
+
+@app.post("/predicciones")
+def crear_predicciones():
+    """
+    Recibe una o varias predicciones. NO hace upsert.
+    Ej:
+    {
+      "id_sensor": 1,
+      "fecha_objetivo": "2025-10-14T10:00:00Z",
+      "valor_predicho": 12.3,
+      "emitido_en": "2025-10-14T09:30:00Z"
+    }
+    """
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return fail("JSON inválido o vacío", 400)
+
+    items = payload if isinstance(payload, list) else [payload]
+    registros = []
+
+    for i, item in enumerate(items, start=1):
+        try:
+            id_sensor = int(item["id_sensor"])
+            fecha_objetivo = parse_iso_datetime(item["fecha_objetivo"])
+            valor_predicho = float(item["valor_predicho"])
+            emitido_en = parse_iso_datetime(item["emitido_en"])
+        except (KeyError, ValueError) as e:
+            return fail(f"Ítem #{i} inválido: {e}", 400)
+
+        registros.append(
+            Prediccion(
+                id_sensor=id_sensor,
+                fecha_objetivo=fecha_objetivo,
+                valor_predicho=valor_predicho,
+                emitido_en=emitido_en,
+            )
+        )
+
+    try:
+        db.session.add_all(registros)   # insert “tal cual”, sin upsert
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        # Si choca con PK/unique existentes de tu tabla, devolvemos error pero NO tocamos el esquema
+        return fail("No se pudieron guardar las predicciones", 400, str(e))
+
+    return ok({"insertados": len(registros)}, 201)
+
+
+@app.get("/predicciones")
+def consultar_predicciones():
+    """
+    Parámetros:
+      - id_sensor (obligatorio)
+      - desde_objetivo / hasta_objetivo  (ISO)   -> filtra fecha_objetivo
+      - emitido_desde / emitido_hasta    (ISO)   -> filtra emitido_en
+      - latest (bool, default false)             -> solo última por fecha_objetivo
+      - limit (int, default 100)
+      - order (asc|desc, default desc)           -> orden por fecha_objetivo, luego emitido_en
+    """
+    id_sensor = request.args.get("id_sensor", type=int)
+    if not id_sensor:
+        return fail("Parámetro 'id_sensor' es obligatorio", 400)
+
+    limit = request.args.get("limit", default=100, type=int)
+    order = request.args.get("order", default="desc", type=str).lower()
+    latest = request.args.get("latest", default="false", type=str).lower() == "true"
+
+    desde_obj = request.args.get("desde_objetivo")
+    hasta_obj = request.args.get("hasta_objetivo")
+    emitido_desde = request.args.get("emitido_desde")
+    emitido_hasta = request.args.get("emitido_hasta")
+
+    try:
+        base = db.select(Prediccion).where(Prediccion.id_sensor == id_sensor)
+
+        if desde_obj:
+            base = base.where(Prediccion.fecha_objetivo >= parse_iso_datetime(desde_obj))
+        if hasta_obj:
+            base = base.where(Prediccion.fecha_objetivo <= parse_iso_datetime(hasta_obj))
+        if emitido_desde:
+            base = base.where(Prediccion.emitido_en >= parse_iso_datetime(emitido_desde))
+        if emitido_hasta:
+            base = base.where(Prediccion.emitido_en <= parse_iso_datetime(emitido_hasta))
+
+        if latest:
+            # ROW_NUMBER() OVER (PARTITION BY fecha_objetivo ORDER BY emitido_en DESC) = 1
+            rn = func.row_number().over(
+                partition_by=Prediccion.fecha_objetivo,
+                order_by=Prediccion.emitido_en.desc()
+            ).label("rn")
+
+            sub = db.select(
+                Prediccion.id_prediccion,
+                Prediccion.id_sensor,
+                Prediccion.fecha_objetivo,
+                Prediccion.valor_predicho,
+                Prediccion.emitido_en,
+                rn
+            ).where(Prediccion.id_sensor == id_sensor)
+
+            if desde_obj:
+                sub = sub.where(Prediccion.fecha_objetivo >= parse_iso_datetime(desde_obj))
+            if hasta_obj:
+                sub = sub.where(Prediccion.fecha_objetivo <= parse_iso_datetime(hasta_obj))
+            if emitido_desde:
+                sub = sub.where(Prediccion.emitido_en >= parse_iso_datetime(emitido_desde))
+            if emitido_hasta:
+                sub = sub.where(Prediccion.emitido_en <= parse_iso_datetime(emitido_hasta))
+
+            sub = sub.subquery()
+            q = db.select(sub).where(sub.c.rn == 1)
+
+            # Orden final
+            if order == "asc":
+                q = q.order_by(sub.c.fecha_objetivo.asc(), sub.c.emitido_en.asc())
+            else:
+                q = q.order_by(sub.c.fecha_objetivo.desc(), sub.c.emitido_en.desc())
+
+            q = q.limit(limit)
+            rows = db.session.execute(q).all()
+
+            data = [
+                {
+                    "id_prediccion": r.id_prediccion,
+                    "id_sensor": r.id_sensor,
+                    "fecha_objetivo": r.fecha_objetivo.isoformat(),
+                    "valor_predicho": r.valor_predicho,
+                    "emitido_en": r.emitido_en.isoformat(),
+                }
+                for r in rows
+            ]
+            return ok(data)
+
+        # Sin latest: consulta directa
+        if order == "asc":
+            base = base.order_by(Prediccion.fecha_objetivo.asc(), Prediccion.emitido_en.asc())
+        else:
+            base = base.order_by(Prediccion.fecha_objetivo.desc(), Prediccion.emitido_en.desc())
+        base = base.limit(limit)
+
+        rows = db.session.execute(base).scalars().all()
+        data = [
+            {
+                "id_prediccion": r.id_prediccion,
+                "id_sensor": r.id_sensor,
+                "fecha_objetivo": r.fecha_objetivo.isoformat(),
+                "valor_predicho": r.valor_predicho,
+                "emitido_en": r.emitido_en.isoformat(),
+            }
+            for r in rows
+        ]
+        return ok(data)
+
+    except ValueError as e:
+        return fail(str(e), 400)
+    except Exception as e:
+        return fail("Error al consultar predicciones", 400, str(e))
+
 
 
 # ----------------------------------
