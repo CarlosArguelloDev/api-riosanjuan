@@ -1,3 +1,3 @@
-# API de Predicciones
+# Predictions API
 
-API para consultar y registrar predicciones asociadas a sensores.
+API to query and store predictions associated with sensors.
