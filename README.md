@@ -1,124 +1,102 @@
-# Predictions API
+# API Río San Juan — Predicciones y Sensores
 
-API to query and store predictions associated with sensors.
+![Banner](assets/banner.png)
 
-## Base URL
+API robusta y escalable para consultar y almacenar mediciones y predicciones asociadas a sensores ambientales.
 
-https://api.okshield.dev
+## Arquitectura del Proyecto
 
----
+El proyecto ha sido refactorizado siguiendo una **arquitectura por capas** para facilitar su mantenimiento y escalabilidad:
 
-## GET /predicciones
-
-Retrieve predictions by sensor.
-
-### Basic example
-
-GET /predicciones?id_sensor=1
-
-### With filters
-
-GET /predicciones
-  ?id_sensor=1
-  &desde_objetivo=2025-11-27T00:00:00Z
-  &hasta_objetivo=2025-11-28T00:00:00Z
-  &emitido_desde=2025-11-26T00:00:00Z
-  &emitido_hasta=2025-11-27T10:00:00Z
-  &latest=true
-  &order=desc
-  &limit=50
-
-### Parameters
-
-| Parameter        | Description |
-|------------------|------------|
-| id_sensor        | Sensor ID |
-| desde_objetivo   | Minimum target date |
-| hasta_objetivo   | Maximum target date |
-| emitido_desde    | Minimum emission date |
-| emitido_hasta    | Maximum emission date |
-| latest           | Returns only the latest prediction per target date |
-| order            | asc or desc |
-| limit            | Maximum number of results |
-
-### Response (200)
-
-{
-  "ok": true,
-  "data": [
-    {
-      "id_prediccion": 42,
-      "id_sensor": 1,
-      "fecha_objetivo": "2025-11-27T12:00:00+00:00",
-      "valor_predicho": 23.5,
-      "emitido_en": "2025-11-27T10:00:00+00:00"
-    }
-  ]
-}
+- **`app/models`**: Definición de tablas y relaciones con SQLAlchemy ORM.
+- **`app/services`**: Lógica de negocio pura (aislada de la capa HTTP).
+- **`app/routes`**: Controladores (Blueprints) que manejan las peticiones y respuestas.
+- **`app/schemas`**: Serialización y validación de datos.
+- **`app/errors`**: Manejador global de errores (404, 400, 500) en formato JSON.
 
 ---
 
-## POST /predicciones
+## Configuración y Ejecución
 
-Create one or multiple predictions.
+### Requisitos
+- Python 3.14+
+- PostgreSQL (Producción) / SQLite (Pruebas)
 
-### Headers
+### Instalación Local
+1. Instalar dependencias:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Configurar variables de entorno (copiar `.env.example` a `.env`):
+   ```bash
+   FLASK_ENV=development
+   DATABASE_URL=postgresql://usuario:password@localhost:5432/db_nombre
+   ```
+3. Ejecutar servidor de desarrollo:
+   ```bash
+   python wsgi.py
+   ```
 
-Content-Type: application/json
-
-### Body (single prediction)
-
-{
-  "id_sensor": 1,
-  "fecha_objetivo": "2025-11-27T12:00:00Z",
-  "valor_predicho": 23.5,
-  "emitido_en": "2025-11-27T10:00:00Z"
-}
-
-### Body (multiple predictions)
-
-[
-  {
-    "id_sensor": 1,
-    "fecha_objetivo": "2025-11-27T12:00:00Z",
-    "valor_predicho": 23.5,
-    "emitido_en": "2025-11-27T10:00:00Z"
-  },
-  {
-    "id_sensor": 1,
-    "fecha_objetivo": "2025-11-27T13:00:00Z",
-    "valor_predicho": 24.0,
-    "emitido_en": "2025-11-27T10:00:00Z"
-  }
-]
-
-### Response (201)
-
-{
-  "ok": true,
-  "data": {
-    "insertados": 2
-  }
-}
+### Docker
+```bash
+docker build -t api-riosanjuan .
+docker run -p 5000:5000 api-riosanjuan
+```
 
 ---
 
-## Examples with curl
+## Documentación de la API (v1)
 
-### POST
+Todas las rutas están prefijadas con `/api/v1`.
 
-curl -X POST "https://api.okshield.dev/predicciones" \
-  -H "Content-Type: application/json" \
-  -d '{"id_sensor":1,"fecha_objetivo":"2025-11-27T12:00:00Z","valor_predicho":23.5,"emitido_en":"2025-11-27T10:00:00Z"}'
+### 1. Predicciones
 
-### GET (latest by target date)
+#### GET /api/v1/predicciones
+Obtener predicciones por sensor con filtros avanzados.
 
-curl "https://api.okshield.dev/predicciones?id_sensor=1&latest=true&limit=20&order=desc"
+**Parámetros:**
+| Parámetro | Descripción |
+|---|---|
+| `id_sensor` | (Obligatorio) ID del sensor. |
+| `desde_objetivo` | Fecha objetivo mínima (ISO 8601). |
+| `hasta_objetivo` | Fecha objetivo máxima. |
+| `latest` | `true` para obtener solo la predicción más reciente por fecha. |
+
+**Ejemplo:**
+`GET /api/v1/predicciones?id_sensor=1&latest=true`
+
+#### POST /api/v1/predicciones
+Crear una o múltiples predicciones.
 
 ---
 
-## Notes
+### 2. Mediciones
 
-- Dates must be in ISO 8601 format.
-- Use Z for UTC, e.g. 2025-11-27T12:00:00Z.
-- latest=true returns only the latest prediction per fecha_objetivo, based on emitido_en.
+#### GET /api/v1/mediciones
+Consultar historial de mediciones reales de un sensor.
+
+#### POST /api/v1/mediciones
+Subir mediciones (soporta carga masiva en JSON).
+
+---
+
+### 3. Catálogos
+- `GET /api/v1/estaciones`: Listar todas las estaciones.
+- `GET /api/v1/sensores`: Listar sensores (filtrable por `id_estacion`).
+- `GET /api/v1/tipos_sensor`: Listar tipos de sensores disponibles.
+
+---
+
+## Pruebas (Testing)
+
+Se utiliza `pytest` para asegurar la calidad del código. Los tests usan una base de datos SQLite en memoria.
+
+```bash
+pytest tests/ -v
+```
+
+---
+
+## Notas
+- Las fechas deben venir en formato **ISO 8601** (ej: `2025-11-27T12:00:00Z`).
+- Toda respuesta de error incluye `{"ok": false, "error": "mensaje"}`.
