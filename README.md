@@ -20,14 +20,14 @@ El proyecto ha sido refactorizado siguiendo una **arquitectura por capas** para 
 
 ### Requisitos
 - Python 3.14+
-- PostgreSQL (Producción) / SQLite (Pruebas)
+- PostgreSQL
 
 ### Instalación Local
 1. Instalar dependencias:
    ```bash
    pip install -r requirements.txt
    ```
-2. Configurar variables de entorno (copiar `.env.example` a `.env`):
+2. Configurar variables de entorno:
    ```bash
    FLASK_ENV=development
    DATABASE_URL=postgresql://usuario:password@localhost:5432/db_nombre
