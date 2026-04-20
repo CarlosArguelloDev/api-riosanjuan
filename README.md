@@ -85,15 +85,6 @@ Subir mediciones (soporta carga masiva en JSON).
 - `GET /api/v1/sensores`: Listar sensores (filtrable por `id_estacion`).
 - `GET /api/v1/tipos_sensor`: Listar tipos de sensores disponibles.
 
----
-
-## Pruebas (Testing)
-
-Se utiliza `pytest` para asegurar la calidad del código. Los tests usan una base de datos SQLite en memoria.
-
-```bash
-pytest tests/ -v
-```
 
 ---
 
